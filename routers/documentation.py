@@ -10,6 +10,7 @@ from datetime import datetime
 from models import DocumentUploadResponse, DocumentType, APIDocumentation
 from services.document_processor import APIDocumentProcessor
 from services.embedding_service import EmbeddingService
+from services.vector_store import VectorStoreService
 
 router = APIRouter(prefix="/api/documentation", tags=["documentation"])
 
@@ -18,14 +19,16 @@ in_memory_chunks: Dict[str, List] = {}  # Store processed chunks
 
 # Initialize services
 document_processor = APIDocumentProcessor()
+vector_store = VectorStoreService()
 
-# Initialize embedding service only if API key is available
+# Initialize embedding service only if API key is available (kept for backwards compatibility)
 embedding_service = None
 if os.getenv("OPENAI_API_KEY"):
     try:
         embedding_service = EmbeddingService()
     except ValueError:
-        print("Warning: OpenAI API key not found. Embedding functionality will be disabled.")
+        print("Warning: OpenAI API key not found. OpenAI embedding functionality will be disabled.")
+        print("Using sentence transformers for local embeddings via vector store.")
 
 def parse_openapi_swagger(content: dict) -> int:
     """Parse OpenAPI/Swagger content and count endpoints"""
@@ -111,7 +114,12 @@ async def upload_documentation(file: UploadFile = File(...)):
             chunks = document_processor.process_document(doc)
             in_memory_chunks[doc_id] = chunks
             
-            # Generate embeddings if service is available (optional for now)
+            # Store chunks in vector database
+            vector_store_success = vector_store.add_documents(chunks, doc_id)
+            if not vector_store_success:
+                print(f"Warning: Failed to store document {doc_id} in vector database")
+            
+            # Generate embeddings if OpenAI service is available (optional backup)
             if embedding_service:
                 try:
                     embeddings = embedding_service.embed_documents_sync(chunks)
@@ -119,7 +127,7 @@ async def upload_documentation(file: UploadFile = File(...)):
                     for i, chunk in enumerate(chunks):
                         chunk.metadata["embedding"] = embeddings[i]
                 except Exception as e:
-                    print(f"Warning: Failed to generate embeddings: {e}")
+                    print(f"Warning: Failed to generate OpenAI embeddings: {e}")
                     
         except Exception as e:
             print(f"Warning: Failed to process document into chunks: {e}")
@@ -153,22 +161,31 @@ async def list_documentation():
         })
     return {"documents": docs}
 
-@router.get("/{doc_id}")
-async def get_documentation(doc_id: str):
-    """Get specific documentation by ID"""
-    if doc_id not in in_memory_docs:
-        raise HTTPException(status_code=404, detail="Documentation not found")
+@router.get("/search")
+async def search_documentation(query: str, limit: int = 5, doc_id: str = None):
+    """Search documentation using vector similarity"""
+    if not query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    doc = in_memory_docs[doc_id]
-    return {
-        "id": doc.id,
-        "name": doc.name,
-        "type": doc.type,
-        "content": doc.content,
-        "uploaded_at": doc.uploaded_at,
-        "endpoints_count": doc.endpoints_count,
-        "file_size": doc.file_size
-    }
+    try:
+        results = vector_store.search_similar(query, n_results=limit, doc_id=doc_id)
+        
+        return {
+            "query": query,
+            "results_count": len(results),
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+@router.get("/stats")
+async def get_vector_store_stats():
+    """Get vector store statistics"""
+    try:
+        stats = vector_store.get_collection_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 @router.get("/{doc_id}/chunks")
 async def get_documentation_chunks(doc_id: str):
@@ -192,6 +209,23 @@ async def get_documentation_chunks(doc_id: str):
         ]
     }
 
+@router.get("/{doc_id}")
+async def get_documentation(doc_id: str):
+    """Get specific documentation by ID"""
+    if doc_id not in in_memory_docs:
+        raise HTTPException(status_code=404, detail="Documentation not found")
+    
+    doc = in_memory_docs[doc_id]
+    return {
+        "id": doc.id,
+        "name": doc.name,
+        "type": doc.type,
+        "content": doc.content,
+        "uploaded_at": doc.uploaded_at,
+        "endpoints_count": doc.endpoints_count,
+        "file_size": doc.file_size
+    }
+
 @router.delete("/{doc_id}")
 async def delete_documentation(doc_id: str):
     """Delete documentation by ID"""
@@ -199,9 +233,12 @@ async def delete_documentation(doc_id: str):
         raise HTTPException(status_code=404, detail="Documentation not found")
     
     doc_name = in_memory_docs[doc_id].name
-    del in_memory_docs[doc_id]
     
-    # Also delete chunks
+    # Delete from vector store
+    vector_store.delete_document(doc_id)
+    
+    # Delete from memory
+    del in_memory_docs[doc_id]
     if doc_id in in_memory_chunks:
         del in_memory_chunks[doc_id]
     
