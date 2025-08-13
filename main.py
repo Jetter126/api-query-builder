@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
+from routers import documentation
+
 app = FastAPI(
     title="Intelligent API Query Builder",
     description="A developer assistant that converts natural language to API queries using RAG",
@@ -16,6 +18,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(documentation.router)
 
 @app.get("/")
 async def root():
