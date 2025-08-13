@@ -5,3 +5,7 @@ python-multipart
 requests
 python-dotenv
 pyyaml
+langchain
+langchain-openai
+langchain-text-splitters
+tiktoken

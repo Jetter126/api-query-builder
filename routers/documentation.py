@@ -4,13 +4,28 @@ from typing import List, Dict
 import json
 import yaml
 import uuid
+import os
 from datetime import datetime
 
 from models import DocumentUploadResponse, DocumentType, APIDocumentation
+from services.document_processor import APIDocumentProcessor
+from services.embedding_service import EmbeddingService
 
 router = APIRouter(prefix="/api/documentation", tags=["documentation"])
 
 in_memory_docs: Dict[str, APIDocumentation] = {}
+in_memory_chunks: Dict[str, List] = {}  # Store processed chunks
+
+# Initialize services
+document_processor = APIDocumentProcessor()
+
+# Initialize embedding service only if API key is available
+embedding_service = None
+if os.getenv("OPENAI_API_KEY"):
+    try:
+        embedding_service = EmbeddingService()
+    except ValueError:
+        print("Warning: OpenAI API key not found. Embedding functionality will be disabled.")
 
 def parse_openapi_swagger(content: dict) -> int:
     """Parse OpenAPI/Swagger content and count endpoints"""
@@ -91,9 +106,30 @@ async def upload_documentation(file: UploadFile = File(...)):
         # Store in memory (temporary)
         in_memory_docs[doc_id] = doc
         
+        # Process document into chunks using LangChain
+        try:
+            chunks = document_processor.process_document(doc)
+            in_memory_chunks[doc_id] = chunks
+            
+            # Generate embeddings if service is available (optional for now)
+            if embedding_service:
+                try:
+                    embeddings = embedding_service.embed_documents_sync(chunks)
+                    # Store embeddings with chunks metadata
+                    for i, chunk in enumerate(chunks):
+                        chunk.metadata["embedding"] = embeddings[i]
+                except Exception as e:
+                    print(f"Warning: Failed to generate embeddings: {e}")
+                    
+        except Exception as e:
+            print(f"Warning: Failed to process document into chunks: {e}")
+            in_memory_chunks[doc_id] = []
+        
+        chunks_count = len(in_memory_chunks.get(doc_id, []))
+        
         return DocumentUploadResponse(
             id=doc_id,
-            message=f"Successfully uploaded and parsed {file.filename}",
+            message=f"Successfully uploaded, parsed, and processed {file.filename} into {chunks_count} chunks",
             type=doc_type,
             endpoints_parsed=endpoints_count,
             file_size=file_size
@@ -134,6 +170,28 @@ async def get_documentation(doc_id: str):
         "file_size": doc.file_size
     }
 
+@router.get("/{doc_id}/chunks")
+async def get_documentation_chunks(doc_id: str):
+    """Get processed chunks for specific documentation"""
+    if doc_id not in in_memory_docs:
+        raise HTTPException(status_code=404, detail="Documentation not found")
+    
+    chunks = in_memory_chunks.get(doc_id, [])
+    
+    return {
+        "doc_id": doc_id,
+        "total_chunks": len(chunks),
+        "chunks": [
+            {
+                "chunk_id": chunk.metadata.get("chunk_id", i),
+                "content": chunk.page_content[:200] + "..." if len(chunk.page_content) > 200 else chunk.page_content,
+                "metadata": {k: v for k, v in chunk.metadata.items() if k != "embedding"},
+                "has_embedding": "embedding" in chunk.metadata
+            }
+            for i, chunk in enumerate(chunks)
+        ]
+    }
+
 @router.delete("/{doc_id}")
 async def delete_documentation(doc_id: str):
     """Delete documentation by ID"""
@@ -142,5 +200,9 @@ async def delete_documentation(doc_id: str):
     
     doc_name = in_memory_docs[doc_id].name
     del in_memory_docs[doc_id]
+    
+    # Also delete chunks
+    if doc_id in in_memory_chunks:
+        del in_memory_chunks[doc_id]
     
     return {"message": f"Successfully deleted {doc_name}"}
