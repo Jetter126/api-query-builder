@@ -24,3 +24,7 @@ class DocumentUploadResponse(BaseModel):
     type: DocumentType
     endpoints_parsed: int
     file_size: int
+
+class URLUploadRequest(BaseModel):
+    url: str
+    name: Optional[str] = None

@@ -28,6 +28,8 @@
             const [uploadedFile, setUploadedFile] = useState(null);
             const [activeTab, setActiveTab] = useState('query');
             const [stats, setStats] = useState(null);
+            const [uploadMethod, setUploadMethod] = useState('file'); // 'file' or 'url'
+            const [urlInput, setUrlInput] = useState('');
 
             // Load documents and stats on component mount
             useEffect(() => {
@@ -91,6 +93,9 @@
                 
                 if (!file) return;
 
+                // Clear previous upload status
+                setUploadedFile(null);
+
                 const formData = new FormData();
                 formData.append('file', file);
 
@@ -114,6 +119,45 @@
                     setUploadedFile({
                         success: false,
                         error: 'Failed to upload file: ' + error.message
+                    });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleUrlUpload = async (e) => {
+                e.preventDefault();
+                
+                if (!urlInput.trim()) return;
+
+                // Clear previous upload status
+                setUploadedFile(null);
+
+                setLoading(true);
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/documentation/upload-url`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            url: urlInput.trim()
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    setUploadedFile(data);
+                    
+                    // Reload documents and stats
+                    await loadDocuments();
+                    await loadStats();
+                    
+                    // Reset URL input
+                    setUrlInput('');
+                } catch (error) {
+                    setUploadedFile({
+                        success: false,
+                        error: 'Failed to fetch from URL: ' + error.message
                     });
                 } finally {
                     setLoading(false);
@@ -338,31 +382,135 @@
                         {activeTab === 'upload' && (
                             <div className="bg-white rounded-lg shadow-sm p-6">
                                 <h2 className="text-xl font-semibold mb-4">Upload API Documentation</h2>
-                                <form onSubmit={handleFileUpload}>
-                                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                                        <i className="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
-                                        <input
-                                            type="file"
-                                            accept=".json,.yaml,.yml"
-                                            className="mb-4"
-                                            disabled={loading}
-                                        />
-                                        <p className="text-gray-600 mb-4">
-                                            Upload OpenAPI/Swagger JSON or YAML files, or Postman collections
-                                        </p>
-                                        <button
-                                            type="submit"
-                                            disabled={loading}
-                                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                                        >
-                                            {loading ? (
-                                                <><i className="fas fa-spinner fa-spin mr-2"></i>Uploading...</>
-                                            ) : (
-                                                <><i className="fas fa-upload mr-2"></i>Upload</>
-                                            )}
-                                        </button>
+                                
+                                {/* Upload Method Tabs */}
+                                <div className="flex mb-4 bg-gray-100 rounded-lg p-1">
+                                    <button
+                                        onClick={() => {
+                                            setUploadMethod('file');
+                                            setUploadedFile(null); // Clear status when switching methods
+                                        }}
+                                        className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+                                            uploadMethod === 'file'
+                                                ? 'bg-white text-blue-600 shadow-sm'
+                                                : 'text-gray-600 hover:text-gray-800'
+                                        }`}
+                                    >
+                                        <i className="fas fa-file-upload mr-2"></i>
+                                        Upload File
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setUploadMethod('url');
+                                            setUploadedFile(null); // Clear status when switching methods
+                                        }}
+                                        className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+                                            uploadMethod === 'url'
+                                                ? 'bg-white text-blue-600 shadow-sm'
+                                                : 'text-gray-600 hover:text-gray-800'
+                                        }`}
+                                    >
+                                        <i className="fas fa-link mr-2"></i>
+                                        From URL
+                                    </button>
+                                </div>
+
+                                {/* File Upload */}
+                                {uploadMethod === 'file' && (
+                                    <form onSubmit={handleFileUpload}>
+                                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                                            <i className="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
+                                            <input
+                                                type="file"
+                                                accept=".json,.yaml,.yml"
+                                                className="mb-4"
+                                                disabled={loading}
+                                            />
+                                            <p className="text-gray-600 mb-4">
+                                                Upload OpenAPI/Swagger JSON or YAML files, or Postman collections
+                                            </p>
+                                            <button
+                                                type="submit"
+                                                disabled={loading}
+                                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                            >
+                                                {loading ? (
+                                                    <><i className="fas fa-spinner fa-spin mr-2"></i>Uploading...</>
+                                                ) : (
+                                                    <><i className="fas fa-upload mr-2"></i>Upload File</>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                {/* URL Upload */}
+                                {uploadMethod === 'url' && (
+                                    <div>
+                                        <form onSubmit={handleUrlUpload}>
+                                            <div className="border-2 border-dashed border-blue-300 rounded-lg p-8">
+                                                <div className="text-center mb-6">
+                                                    <i className="fas fa-link text-4xl text-blue-400 mb-4"></i>
+                                                    <h3 className="text-lg font-medium text-gray-900 mb-2">
+                                                        Fetch from URL
+                                                    </h3>
+                                                    <p className="text-gray-600">
+                                                        Enter the URL to an OpenAPI/Swagger specification or Postman collection
+                                                    </p>
+                                                </div>
+                                                
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <input
+                                                            type="url"
+                                                            value={urlInput}
+                                                            onChange={(e) => setUrlInput(e.target.value)}
+                                                            placeholder="https://api.example.com/openapi.json"
+                                                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                            disabled={loading}
+                                                            required
+                                                        />
+                                                    </div>
+                                                    
+                                                    <div className="text-center">
+                                                        <button
+                                                            type="submit"
+                                                            disabled={loading || !urlInput.trim()}
+                                                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                                        >
+                                                            {loading ? (
+                                                                <><i className="fas fa-spinner fa-spin mr-2"></i>Fetching...</>
+                                                            ) : (
+                                                                <><i className="fas fa-download mr-2"></i>Fetch Documentation</>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </form>
+
+                                        {/* Example URLs */}
+                                        <div className="mt-4">
+                                            <p className="text-sm text-gray-600 mb-2">Example API documentation URLs:</p>
+                                            <div className="space-y-1">
+                                                {[
+                                                    'https://petstore.swagger.io/v2/swagger.json',
+                                                    'https://api.github.com/repos/github/docs/contents/lib/rest/static/openapi.json',
+                                                    'https://raw.githubusercontent.com/OAI/OpenAPI-Specification/main/examples/v3.0/petstore.yaml'
+                                                ].map((exampleUrl, index) => (
+                                                    <button
+                                                        key={index}
+                                                        onClick={() => setUrlInput(exampleUrl)}
+                                                        className="block text-xs text-blue-600 hover:text-blue-800 hover:underline transition-colors"
+                                                        disabled={loading}
+                                                    >
+                                                        {exampleUrl}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
-                                </form>
+                                )}
 
                                 {uploadedFile && (
                                     <div className={`mt-4 p-4 rounded-lg ${uploadedFile.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
