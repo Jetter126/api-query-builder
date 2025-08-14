@@ -428,7 +428,4 @@ API Query Explanation:
         if generated_query.get('parameters_used'):
             explanation_text += f"- Parameters Used: {', '.join(generated_query['parameters_used'])}\n"
         
-        if generated_query.get('mock_response'):
-            explanation_text += "\nNote: This is a mock response generated without an LLM. In production, this would use GPT-4 or similar for more accurate results.\n"
-        
         return explanation_text.strip()
