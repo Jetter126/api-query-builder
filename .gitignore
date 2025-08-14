@@ -1,6 +1,9 @@
 # Product Requirements Document
 PRD.md
 
+# ChromaDB database
+chroma_db/
+
 # macOS
 .DS_Store
 .DS_Store?
