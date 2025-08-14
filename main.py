@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from routers import documentation
+from routers import documentation, query_generation
 
 app = FastAPI(
     title="Intelligent API Query Builder",
@@ -20,6 +20,7 @@ app.add_middleware(
 )
 
 app.include_router(documentation.router)
+app.include_router(query_generation.router)
 
 @app.get("/")
 async def root():
